@@ -23,3 +23,7 @@ GET `api/v1`
 3. add a rate limiter
 4. add tests
 5. input validations
+
+## Future works
+1. Authentication
+2. Customization
