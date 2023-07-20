@@ -34,3 +34,8 @@ type Config struct {
 	PostgresSslMode  string
 	RedisUrl         string
 }
+
+type ShortenerStorage struct {
+	db    PostgresStore
+	cache CacheStore
+}

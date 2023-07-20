@@ -13,10 +13,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	cache, err := NewRedisStore()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if err := store.Init(); err != nil {
 		log.Fatal(err)
 	}
 
-	server := NewAPIServer(":"+port, store)
+	server := NewAPIServer(":"+port, store, cache)
 	server.Run()
 }

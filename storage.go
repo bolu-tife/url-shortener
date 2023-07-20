@@ -4,62 +4,24 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/go-redis/redis/v8"
 	_ "github.com/lib/pq"
 )
 
-type Storage interface {
+type DbStorage interface {
 	CreateUrlTable() error
 	CreateUrl(*Url) error
 	GetUrlByLongUrl(string) (*Url, error)
 	GetUrlByShortUrl(string) (*Url, error)
 	GetUrls(int, int) ([]*Url, error)
-
-}
-
-type ShortenerStorage struct {
-	db    PostgresStore
-	cache CacheStore
 }
 
 type PostgresStore struct {
 	db *sql.DB
 }
 
-type CacheStore struct {
-	cache *redis.Client
-}
-
 func (s *PostgresStore) Init() error {
 	return s.CreateUrlTable()
 }
-
-func NewRedisStore() (*redis.Client, error) {
-	redisUrl :=  GetConfig().RedisUrl
-	opt, err := redis.ParseURL(redisUrl)
-	if err != nil {
-		panic(err)
-	}
-
-	client := redis.NewClient(opt)
-
-	_, err = client.Ping(client.Context()).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	return client, err
-
-}
-
-// func (s *CacheStore) GetUrlByShortUrl(url string) (*Url, error) {
-// 	ctx := context.Background()
-// 	cacheKey := "url:" + url
-// 	shortURL, err := s.cache.Get(ctx, cacheKey).Result()
-// 	if err == nil {
-// 		return shortURL, nil
-// 	}
-// }
 
 func NewPostgresStore() (*PostgresStore, error) {
 	username, dbName, password, sslMode := GetConfig().PostgresUser, GetConfig().PostgresDb, GetConfig().PostgresPassword, GetConfig().PostgresSslMode
@@ -80,7 +42,7 @@ func NewPostgresStore() (*PostgresStore, error) {
 }
 
 func (s *PostgresStore) CreateUrlTable() error {
-	
+
 	query := `create table if not exists url(
 		id serial primary key,
 		short_url varchar(50) unique,
@@ -110,17 +72,17 @@ func (s *PostgresStore) GetUrlByQuery(query string, args ...any) (*Url, error) {
 
 	url := new(Url)
 	err := s.db.QueryRow(query, args...).Scan(&url.ID, &url.ShortUrl, &url.LongUrl)
-	
-	if err == sql.ErrNoRows{
+
+	if err == sql.ErrNoRows {
 
 		return nil, fmt.Errorf("url not found")
 	}
-	if err != nil{
+	if err != nil {
 		return nil, err
 	}
 
-	return url,nil 
-	 
+	return url, nil
+
 }
 
 func (s *PostgresStore) GetUrls(skip, limit int) ([]*Url, error) {

@@ -8,21 +8,12 @@ POST `api/v1/shorten`
 
 
 GET `api/v1/{shortUrl}`
-    Query PArameter - shortUrl
+    Query Parameter - shortUrl
     return: longUrl
 
 GET `api/v1`
-    return : Welcome message
+    return : returns all 
 
-
-
-
-## Todo: 
-1. add postgres service - for data storage
-2. add redis service for caching
-3. add a rate limiter
-4. add tests
-5. input validations
 
 ## Future works
 1. Authentication

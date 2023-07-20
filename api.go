@@ -2,24 +2,31 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
-	"time"
 
+	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
+var errInternalServer = errors.New("internal server error")
+var errTooManyRequest = errors.New("too many requests")
+
 type APIServer struct {
 	listenAddr string
-	store      Storage
+	store      DbStorage
+	cache      CacheStorage
 }
 
-func NewAPIServer(listenAddr string, store Storage) *APIServer {
+func NewAPIServer(listenAddr string, store DbStorage, cache CacheStorage) *APIServer {
 	return &APIServer{
 		listenAddr: listenAddr,
 		store:      store,
+		cache:      cache,
 	}
 }
 
@@ -27,9 +34,9 @@ func (s *APIServer) Run() {
 	router := mux.NewRouter()
 	v1Router := router.PathPrefix("/api/v1").Subrouter()
 
-	v1Router.HandleFunc("/", makeHTTPHandleFunc(s.handleGetUrls))
-	v1Router.HandleFunc("/{shortUrl}", makeHTTPHandleFunc(s.handleRedirect)).Methods(http.MethodGet)
-	v1Router.HandleFunc("/shorten", makeHTTPHandleFunc(s.handleShorten)).Methods(http.MethodPost)
+	v1Router.Handle("", perClientRateLimiter(makeHTTPHandleFunc(s.handleGetUrls)))
+	v1Router.Handle("/shorten", perClientRateLimiter(makeHTTPHandleFunc(s.handleShorten)))
+	v1Router.Handle("/{shortUrl}", perClientRateLimiter(makeHTTPHandleFunc(s.handleRedirect)))
 
 	log.Println("JSON API server running on port: ", s.listenAddr)
 
@@ -43,18 +50,29 @@ func (s *APIServer) handleRedirect(w http.ResponseWriter, r *http.Request) error
 	if r.Method != http.MethodGet {
 		return fmt.Errorf("method not allowed %s", r.Method)
 	}
+
 	id := mux.Vars(r)["shortUrl"]
 
-	// check if it's in cache lookup in db and add
-
-	url, err := s.store.GetUrlByShortUrl(id)
-
-	if err != nil {
+	longUrl, err := s.cache.GetLongUrlFromShortUrl(id)
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return err
 	}
 
-	return WriteJSON(w, http.StatusOK, url)
+	if longUrl == "" {
+		url, err := s.store.GetUrlByShortUrl(id)
+		if err != nil {
+			return err
+		}
+		longUrl = url.LongUrl
 
+		err = s.cache.SetShortUrlToLongUrl(url.ShortUrl, url.LongUrl)
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+	}
+
+	return WriteJSON(w, http.StatusOK, longUrl)
 }
 
 func (s *APIServer) handleGetUrls(w http.ResponseWriter, r *http.Request) error {
@@ -77,8 +95,8 @@ func (s *APIServer) handleGetUrls(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	return WriteJSON(w, http.StatusOK, urls)
 
+	return WriteJSON(w, http.StatusOK, urls)
 }
 
 func (s *APIServer) handleShorten(w http.ResponseWriter, r *http.Request) error {
@@ -91,51 +109,36 @@ func (s *APIServer) handleShorten(w http.ResponseWriter, r *http.Request) error 
 	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
 		return err
 	}
-	// // check if longUrl is in db n cache
-	// url, err := s.store.GetUrlByLongUrl(req.LongUrl)
-	// if err != nil {
-	// 	return err
-	// }
 
-	// if url != nil {
-	// 	return fmt.Errorf("already exist")
-	// }
-
-	id := generateID()
-	shortUrl := base2Converter(id)
+	shortUrl := generateID()
 
 	url, err := NewUrl(shortUrl, req.LongUrl)
 	if err != nil {
 		return err
 	}
 
-	// add to set
-
 	if err := s.store.CreateUrl(url); err != nil {
 		return err
 	}
-	return WriteJSON(w, http.StatusCreated, url)
 
+	return WriteJSON(w, http.StatusCreated, url)
 }
 
 func WriteJSON(w http.ResponseWriter, status int, v any) error {
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(status)
+
 	return json.NewEncoder(w).Encode(v)
 }
 
 func generateID() string {
-	return time.Now().Format("20060102150405")
-}
-
-func base2Converter(id string) string {
-	// do something
-	return id
+	return uuid.New().String()[:7]
 }
 
 type APIError struct {
 	Error string `json:"error"`
 }
+
 type apiFunc func(http.ResponseWriter, *http.Request) error
 
 func makeHTTPHandleFunc(f apiFunc) http.HandlerFunc {
